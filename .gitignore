@@ -1,0 +1,37 @@
+# ---- challenge data (never committed) ----
+dataset/
+*.tsv
+
+# ---- generated pipeline artefacts ----
+work/
+output/
+*.npy
+*.npz
+*.parquet
+matcher_lgb.txt
+matcher_calib.pkl
+
+# ---- run logs / scratch ----
+*.log
+*.sh
+
+
+# ---- submission archive ----
+*_submission.zip
+
+# ---- organiser-provided starter code (see README) ----
+utils/
+
+# ---- python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# ---- os / editor ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
