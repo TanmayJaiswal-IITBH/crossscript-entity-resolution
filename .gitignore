@@ -1,28 +1,44 @@
-# ---- challenge data (never committed) ----
+# ============================================================================
+# Excluded: challenge data and bulk generated artefacts.
+# 18 of these exceed GitHub's 100 MB hard per-file limit; all are either
+# organiser-supplied or regenerable from src/ with PYTHONHASHSEED=0 and the
+# frozen SEED=20260925.
+# ============================================================================
+
+# challenge data (organiser-supplied, up to 509 MB per file)
 dataset/
-*.tsv
 
-# ---- generated pipeline artefacts ----
-work/
-output/
-*.npy
-*.npz
-*.parquet
-matcher_lgb.txt
-matcher_calib.pkl
+# bulk generated artefacts: postings indexes, normalised parquet caches,
+# feature matrices, per-shard candidate streams
+work/*.parquet
+work/*.npz
+work/*.npy
+work/cand_*.tsv
+work/out_*.tsv
+work/_package/
 
-# ---- run logs / scratch ----
-*.log
-*.sh
+# derived ground-truth splits: regenerate with `python src/split.py`
+work/val_truth.tsv
+work/val_meta.tsv
+work/fit_truth.tsv
+work/fit_meta.tsv
+work/smoke_truth.tsv
 
+# candidate_pairs.tsv is ~3.5 GB at the final blocking settings
+output/candidate_pairs.tsv
 
-# ---- submission archive ----
+# submission archive
 *_submission.zip
 
-# ---- organiser-provided starter code (see README) ----
-utils/
+# ============================================================================
+# Kept: trained model, calibration, frozen decision rule, run logs,
+# orchestration scripts, and the final submission file.
+# Negations below re-include specific artefacts excluded by the rules above.
+# ============================================================================
+!work/matcher_calib.pkl
+!work/best_rule.npy
 
-# ---- python ----
+# python
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -30,7 +46,7 @@ __pycache__/
 venv/
 .ipynb_checkpoints/
 
-# ---- os / editor ----
+# os / editor
 .DS_Store
 Thumbs.db
 .idea/
