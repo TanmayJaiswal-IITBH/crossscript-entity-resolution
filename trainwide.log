@@ -1,0 +1,62 @@
+pairs 6532076   positives 393242 (6.02%)   entities 120000   features 52
+[200]	va's average_precision: 0.997706
+[400]	va's average_precision: 0.997943
+[600]	va's average_precision: 0.997989
+  fold 0: best_iter=720  AP=0.99801  AUC=0.99987
+[200]	va's average_precision: 0.997786
+[400]	va's average_precision: 0.997993
+[600]	va's average_precision: 0.998045
+[800]	va's average_precision: 0.998064
+  fold 1: best_iter=772  AP=0.99807  AUC=0.99987
+[200]	va's average_precision: 0.997836
+[400]	va's average_precision: 0.998004
+[600]	va's average_precision: 0.998064
+[800]	va's average_precision: 0.998098
+  fold 2: best_iter=893  AP=0.99810  AUC=0.99987
+[200]	va's average_precision: 0.997771
+[400]	va's average_precision: 0.997974
+[600]	va's average_precision: 0.998035
+[800]	va's average_precision: 0.998066
+[1000]	va's average_precision: 0.998076
+  fold 3: best_iter=1096  AP=0.99808  AUC=0.99987
+
+OOF  AP=0.99806  AUC=0.99987
+training final model on all data for 1087 rounds
+saved E:\ml hackathon\student_resource\work\matcher_lgb.txt
+saved E:\ml hackathon\student_resource\work\matcher_calib.pkl (isotonic on out-of-fold predictions)
+
+calibration check (OOF):
+  bin  0  raw=0.0000  calibrated=0.0000  actual=0.0000  n=653208
+  bin  1  raw=0.0000  calibrated=0.0000  actual=0.0000  n=653208
+  bin  2  raw=0.0000  calibrated=0.0000  actual=0.0000  n=653208
+  bin  3  raw=0.0000  calibrated=0.0000  actual=0.0000  n=653208
+  bin  4  raw=0.0000  calibrated=0.0000  actual=0.0000  n=653208
+  bin  5  raw=0.0000  calibrated=0.0000  actual=0.0000  n=653208
+  bin  6  raw=0.0000  calibrated=0.0000  actual=0.0000  n=653207
+  bin  7  raw=0.0000  calibrated=0.0000  actual=0.0000  n=653208
+  bin  8  raw=0.0000  calibrated=0.0000  actual=0.0000  n=653208
+  bin  9  raw=0.6016  calibrated=0.6020  actual=0.6020  n=653208
+
+top features by gain:
+  s0_rank             7282061
+  s0_r_best           3538606
+  s0                  3174682
+  a_contain           1193486
+  s0_rank_src          954042
+  s0_z                 788722
+  at_rank              579875
+  a_jacc               354631
+  n_partial            323364
+  n_lev                259212
+  a_dig_jacc           247212
+  n_ntok_p             205661
+  a_tokset             190387
+  legal_state          140042
+  n_jw                 101218
+  a_3gram               96053
+  a_streetnum           86624
+  n_len_ratio           79497
+  blk_addr              77126
+  n_idfw                60523
+
+total 1012s

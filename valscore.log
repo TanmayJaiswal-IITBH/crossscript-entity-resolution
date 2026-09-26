@@ -1,0 +1,8 @@
+model: E:\ml hackathon\student_resource\work\matcher_lgb.txt (1320 trees)
+calibration: E:\ml hackathon\student_resource\work\matcher_calib.pkl
+entities: 39999   true pairs: 138584
+  2000/39999  15s (eta 292s)
+  12000/39999  87s (eta 204s)
+  22000/39999  159s (eta 130s)
+  32000/39999  232s (eta 58s)
+saved work/val_scored.npz : 4679225 pairs, blocking recall 0.8944, 292s

@@ -1,0 +1,21 @@
+  S2 retrieved in 267s
+  S3 retrieved in 275s
+
+kn=60 ka=60 bn=8000 ba=8000
+UNION recall 0.9448   cand/query 235.8   reduction 0.99997715
+  name-only  recall 0.6996
+  addr-only  recall 0.8179
+  cap 20   recall 0.7986  cand/query 20.0
+  cap 30   recall 0.8316  cand/query 30.0
+  cap 40   recall 0.8509  cand/query 40.0
+  cap 50   recall 0.8632  cand/query 50.0
+  cap 60   recall 0.8726  cand/query 60.0
+
+breakdown:
+  ('India', '1')   recall 0.9023  (776/860)
+  ('India', '2')   recall 0.9194  (4998/5436)
+  ('India', '3+')  recall 0.9246  (45480/49190)
+  ('US', '1')      recall 0.9615  (1249/1299)
+  ('US', '2')      recall 0.9587  (7829/8166)
+  ('US', '3+')     recall 0.9588  (70598/73633)
+entities with >=1 missed match: 5229 / 39999 (13.07%)

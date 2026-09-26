@@ -1,0 +1,14 @@
+entities: 200001   features: 52
+pools loaded
+  2000/200001 entities  pairs=74180 pos=6198  16s (eta 1588s)
+  22000/200001 entities  pairs=818956 pos=68274  154s (eta 1247s)
+  42000/200001 entities  pairs=1564063 pos=130504  292s (eta 1100s)
+  62000/200001 entities  pairs=2308611 pos=192331  431s (eta 958s)
+  82000/200001 entities  pairs=3054948 pos=254543  555s (eta 799s)
+  102000/200001 entities  pairs=3800462 pos=316769  679s (eta 653s)
+  122000/200001 entities  pairs=4547225 pos=378714  800s (eta 511s)
+  142000/200001 entities  pairs=5291895 pos=441156  920s (eta 376s)
+  162000/200001 entities  pairs=6035349 pos=503234  1041s (eta 244s)
+  182000/200001 entities  pairs=6779942 pos=564674  1163s (eta 115s)
+  200001/200001 entities  pairs=7450208 pos=620350  1272s (eta 0s)
+saved work/fit_{X,y,g}.npy : 7450208 pairs, 620350 positives (8.33%), 1303s

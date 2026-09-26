@@ -1,0 +1,26 @@
+strata (proportional allocation):
+  India|0        pool=49351     val=895     fit=4473   
+  India|1        pool=47468     val=860     fit=4302   
+  India|2        pool=149927    val=2718    fit=13588  
+  India|3+       pool=636442    val=11536   fit=57680  
+  US|0           pool=73896     val=1339    fit=6697   
+  US|1           pool=71689     val=1299    fit=6497   
+  US|2           pool=225285    val=4083    fit=20417  
+  US|3+          pool=952763    val=17269   fit=86347  
+wrote val: 39999 entities, 138584 true matches
+wrote fit: 200001 entities, 692057 true matches
+
+SEED=20260925 frozen. Singleton rate in val: 0.0559
+  train_s2: 5034616 records -> 102354694 postings (24s)
+  -> 1900067 tokens (85 too common, dropped), 93220095 postings, 130s, 403 MB
+  train_s3: 5285603 records -> 108513158 postings (24s)
+  -> 1939801 tokens (97 too common, dropped), 97313132 postings, 137s, 420 MB
+  test_s2: 4887273 records -> 102199407 postings (24s)
+  -> 1881214 tokens (95 too common, dropped), 91847485 postings, 129s, 397 MB
+  test_s3: 5082316 records -> 105293468 postings (24s)
+  -> 1913986 tokens (100 too common, dropped), 94479911 postings, 136s, 409 MB
+  norms train_s2 in 137s
+  norms train_s3 in 187s
+  norms test_s2 in 174s
+  norms test_s3 in 174s
+REBUILD COMPLETE

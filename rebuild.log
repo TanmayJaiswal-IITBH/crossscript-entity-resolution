@@ -1,0 +1,6 @@
+  train_s1_norm.parquet: 2206821 rows in 19.0s -> 101 MB
+  train_s2_norm.parquet: 5034616 rows in 45.9s -> 237 MB
+  train_s3_norm.parquet: 5285603 rows in 45.0s -> 250 MB
+  test_s1_norm.parquet: 1732544 rows in 16.7s -> 80 MB
+  test_s2_norm.parquet: 4887273 rows in 44.7s -> 235 MB
+  test_s3_norm.parquet: 5082316 rows in 47.5s -> 242 MB
