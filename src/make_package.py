@@ -1,24 +1,21 @@
-"""Assemble the final submission zip in the structure the challenge requires."""
-import os
-import sys
-import shutil
-import zipfile
+"""Assemble the final submission zip in the structure the challenge requires.
+
+<team>_submission.zip
+  output/matching_results.tsv, output/candidate_pairs.tsv
+  code/business_entity_resolution/
+      src/*.py, config/, work/<model files>, README.md,
+      requirements.txt, requirements-embed.txt, embed_env.sh
+  Documentation_template.md, RESULTS.md
+"""
 import argparse
+import glob
+import os
+import shutil
+import sys
+import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-# the pipeline as shipped; Day-1 experiments that were superseded
-# (keys.py/blocking.py/features.py/run_pipeline.py) are kept because the
-# methodology document refers to them as the blocking v1/v2 iterations.
-SRC_FILES = ["common.py", "normalize.py", "split.py", "evaluate.py",
-             "block2.py", "block3.py", "pairs.py", "features2.py", "engine.py",
-             "build_training2.py", "train_matcher.py", "decide.py",
-             "score_split.py", "run_pipeline2.py", "error_analysis.py",
-             "measure_block2.py", "measure_block3.py", "diag_missed.py",
-             "diag_tokens.py", "diag_rank.py", "make_package.py",
-             # superseded Day-1 iterations, referenced in the write-up
-             "keys.py", "blocking.py", "features.py", "run_pipeline.py",
-             "measure_blocking.py", "sweep_threshold.py", "build_training.py"]
+MODEL_FILES = ("matcher_lgb.txt", "matcher_calib.pkl", "best_rule.npy")
 
 
 def main():
@@ -31,7 +28,8 @@ def main():
     if os.path.exists(stage):
         shutil.rmtree(stage)
     code = os.path.join(stage, "code", "business_entity_resolution")
-    os.makedirs(os.path.join(code, "src"))
+    for d in ("src", "config", "work"):
+        os.makedirs(os.path.join(code, d))
     os.makedirs(os.path.join(stage, "output"))
 
     for f in ("matching_results.tsv", "candidate_pairs.tsv"):
@@ -39,18 +37,18 @@ def main():
         if not os.path.exists(p):
             sys.exit("missing %s -- run the test pipeline first" % p)
         shutil.copy2(p, os.path.join(stage, "output", f))
-    for f in SRC_FILES:
-        p = os.path.join(ROOT, "src", f)
-        if os.path.exists(p):
-            shutil.copy2(p, os.path.join(code, "src", f))
-    shutil.copy2(os.path.join(ROOT, "requirements.txt"),
-                 os.path.join(code, "requirements.txt"))
-    shutil.copy2(os.path.join(ROOT, "PIPELINE_README.md"),
-                 os.path.join(code, "README.md"))
+    # every source file currently in src/ -- no hand-maintained list to go stale
+    for p in glob.glob(os.path.join(ROOT, "src", "*.py")):
+        shutil.copy2(p, os.path.join(code, "src", os.path.basename(p)))
+    for p in glob.glob(os.path.join(ROOT, "config", "*")):
+        shutil.copy2(p, os.path.join(code, "config", os.path.basename(p)))
+    for f in MODEL_FILES:
+        shutil.copy2(os.path.join(ROOT, "work", f), os.path.join(code, "work", f))
+    for f in ("requirements.txt", "requirements-embed.txt", "embed_env.sh"):
+        shutil.copy2(os.path.join(ROOT, f), os.path.join(code, f))
+    shutil.copy2(os.path.join(ROOT, "PIPELINE_README.md"), os.path.join(code, "README.md"))
     for f in ("Documentation_template.md", "RESULTS.md"):
-        p = os.path.join(ROOT, f)
-        if os.path.exists(p):
-            shutil.copy2(p, os.path.join(stage, f))
+        shutil.copy2(os.path.join(ROOT, f), os.path.join(stage, f))
 
     zpath = os.path.join(ROOT, "%s_submission.zip" % args.team)
     with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:

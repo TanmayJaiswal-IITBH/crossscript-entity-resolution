@@ -56,8 +56,13 @@ def main():
     ap.add_argument("--procs", type=int, default=5)
     ap.add_argument("--shard", default="0/1")
     ap.add_argument("--tag", default="v2")
+    ap.add_argument("--start", type=int, default=None, help="explicit first entity index")
+    ap.add_argument("--end", type=int, default=None, help="explicit end entity index")
     ap.add_argument("--merge", action="store_true")
     ap.add_argument("--out-dir", default=None)
+    ap.add_argument("--dense", default=None,
+                    help="dense candidate file from embed_retrieve.py (unioned in)")
+    ap.add_argument("--dense-k", type=int, default=25)
     args = ap.parse_args()
 
     subset = None
@@ -74,16 +79,24 @@ def main():
         cp = os.path.join(out_dir, "candidate_pairs.tsv")
         n_pred = n_empty = n_cand = 0
         with open(mp, "w", encoding="utf-8", newline="\n") as fm, \
-                open(cp, "w", encoding="utf-8", newline="\n") as fc:
+                open(cp, "w", encoding="utf-8", newline="\n") as fc, \
+                open(os.path.join(out_dir, "accepted_scores.tsv"), "w",
+                     encoding="utf-8", newline="\n") as fs:
             fm.write("source1_entity_id\tmatched_entity_ids\n")
             fc.write("source1_entity_id\tcandidate_entity_ids\n")
             written = 0
             for i in range(sn):
                 with open(shard_path(args.tag, args.split, i), encoding="utf-8") as fh:
                     for line in fh:
-                        eid, matched, cands = line.rstrip("\n").split("\t")
+                        parts = line.rstrip("\n").split("\t")
+                        eid, matched, cands = parts[:3]
                         fm.write(eid + "\t" + matched + "\n")
                         fc.write(eid + "\t" + cands + "\n")
+                        if len(parts) > 3:
+                            fs.write(eid + "\t" + ",".join(
+                                "%s:%s" % (m_, s_) for m_, s_ in
+                                zip(matched.split(",") if matched else [],
+                                    parts[3].split(",") if parts[3] else [])) + "\n")
                         written += 1
                         n_cand += cands.count(",") + 1 if cands else 0
                         if matched:
@@ -108,11 +121,19 @@ def main():
             iso = pickle.load(fh)
     lo = n_q * si // sn
     hi = n_q * (si + 1) // sn
+    # explicit range overrides the shard split (used to hand the tail of a running
+    # job to a second process)
+    if args.start is not None:
+        lo = args.start
+    if args.end is not None:
+        hi = args.end
     print("shard %d/%d: entities [%d, %d)  rule tau=%.2f delta=%.2f tau2=%.2f "
           "tsing=%.2f kmax=%d" % (si, sn, lo, hi, tau, delta, tau2, tsing, kmax),
           flush=True)
 
-    pools = Pools(args.split)
+    pools = Pools(args.split, dense=args.dense, dense_k=args.dense_k,
+                  dense_only=(set(q["entity_id"][lo:hi]) if args.start is not None
+                              else None))
     t0 = time.time()
     with open(shard_path(args.tag, args.split, si), "w", encoding="utf-8",
               newline="\n") as fh, Pool(args.procs) as pool:
@@ -121,7 +142,7 @@ def main():
             X, ids, starts, ends = featurize_chunk(pools, q, s, e, args, pool)
             if len(ids) == 0:
                 for i in range(e - s):
-                    fh.write(q["entity_id"][s + i] + "\t\t\n")
+                    fh.write(q["entity_id"][s + i] + "\t\t\t\n")
                 continue
             sc = booster.predict(X)
             if iso is not None:
@@ -129,12 +150,15 @@ def main():
             for i, (a, b) in enumerate(zip(starts, ends)):
                 eid = q["entity_id"][s + i]
                 if a >= b:
-                    fh.write(eid + "\t\t\n")
+                    fh.write(eid + "\t\t\t\n")
                     continue
                 sub = sc[a:b]
                 sel = apply_rule(sub, tau, delta, tau2, tsing, kmax)
+                # 4th column: scores of the accepted pairs, so conflict
+                # resolution needs no separate re-scoring pass
                 fh.write(eid + "\t" + ",".join(ids[a + j] for j in sel)
-                         + "\t" + ",".join(ids[a:b]) + "\n")
+                         + "\t" + ",".join(ids[a:b])
+                         + "\t" + ",".join("%.6f" % sub[j] for j in sel) + "\n")
             if (s - lo) // args.chunk % 20 == 0:
                 el = time.time() - t0
                 done = e - lo
