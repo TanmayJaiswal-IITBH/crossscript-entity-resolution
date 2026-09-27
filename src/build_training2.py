@@ -31,6 +31,9 @@ def main():
     ap.add_argument("--procs", type=int, default=7)
     ap.add_argument("--neg-rate", type=float, default=0.30)
     ap.add_argument("--max-entities", type=int, default=0)
+    ap.add_argument("--dense", default=None,
+                    help="dense candidate file from embed_retrieve.py (unioned in)")
+    ap.add_argument("--dense-k", type=int, default=25)
     args = ap.parse_args()
 
     t = read_tsv(args.truth)
@@ -44,7 +47,7 @@ def main():
         n_q = min(n_q, args.max_entities)
     print("entities: %d   features: %d" % (n_q, N_FEATURES), flush=True)
 
-    pools = Pools(args.split)
+    pools = Pools(args.split, dense=args.dense, dense_k=args.dense_k)
     print("pools loaded", flush=True)
     rng = np.random.default_rng(99)
     Xs, ys, gs = [], [], []

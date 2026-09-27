@@ -84,9 +84,28 @@ class Pools(object):
     Both are per-record scalars, computed once at load, so they cost nothing per
     pair."""
 
-    def __init__(self, split, srcs=(2, 3)):
+    def __init__(self, split, srcs=(2, 3), dense=None, dense_k=25, dense_only=None):
         self.split = split
         self.src = {}
+        self.dense = None
+        if dense:
+            # dense bi-encoder candidates (embed_retrieve.py): per S1 entity, the
+            # top-K pool rows per source by cosine over "name, address".
+            # dense_only: keep just these entities' rows (saves RAM when a process
+            # handles only part of the query set).
+            z = np.load(dense, allow_pickle=True)
+            ents = z["entity"].tolist()
+            keep = (np.arange(len(ents)) if dense_only is None else
+                    np.array([i for i, e in enumerate(ents) if e in dense_only],
+                             dtype=np.int64))
+            self.dense = dict(
+                row={ents[i]: r for r, i in enumerate(keep.tolist())},
+                k=dense_k,
+                idx={2: np.ascontiguousarray(z["idx2"][keep, :dense_k]),
+                     3: np.ascontiguousarray(z["idx3"][keep, :dense_k])},
+                cos={2: np.ascontiguousarray(z["cos2"][keep, :dense_k]).astype(np.float32),
+                     3: np.ascontiguousarray(z["cos3"][keep, :dense_k]).astype(np.float32)})
+            del z, ents
         for s in srcs:
             tb = pq.read_table(os.path.join(WORK, "%s_s%d_norm.parquet" % (split, s)),
                                columns=["entity_id", "name", "core", "addr", "state"])
@@ -167,9 +186,37 @@ def candidates_for_chunk(pools, q, s, e, kn, ka, bn, ba):
             k = (a, b)
             prev = m.get(k)
             m[k] = (prev[0], c) if prev else (0.0, c)
+        # dense candidates join the TF-IDF ones (with zero TF-IDF scores)
+        dinfo = [None] * n
+        if pools.dense is not None:
+            D = pools.dense
+            for a in range(n):
+                r = D["row"].get(q["entity_id"][s + a])
+                if r is None:
+                    continue
+                rows_ = D["idx"][src][r]
+                coss = D["cos"][src][r]
+                valid = rows_ >= 0
+                look = {int(j): (float(c), float(k))
+                        for k, (j, c) in enumerate(zip(rows_[valid], coss[valid]))}
+                floor = float(coss[valid][-1]) if valid.any() else 0.0
+                dinfo[a] = (look, floor)
+                for j in look:
+                    if (a, j) not in m:
+                        m[(a, j)] = (0.0, 0.0)
         is_s2 = 1.0 if src == 2 else 0.0
+        K = pools.dense["k"] if pools.dense is not None else 99
         for (a, b), (bn_, ba_) in m.items():
-            per_q[a].append((src, b, bn_, ba_, is_s2))
+            di = dinfo[a]
+            if di is None:
+                dc, dr, ind = 0.0, float(K), 0.0
+            elif b in di[0]:
+                dc, dr = di[0][b]
+                ind = 1.0
+            else:
+                # outside the dense top-K: its cosine is at most the K-th one
+                dc, dr, ind = di[1], float(K), 0.0
+            per_q[a].append((src, b, bn_, ba_, is_s2, dc, dr, ind))
 
     rows, ids, starts, ends = [], [], [], []
     pos = 0
@@ -181,13 +228,14 @@ def candidates_for_chunk(pools, q, s, e, kn, ka, bn, ba):
         qlegal = int(q["legal"][qi])
         qstate = q["state"][qi]
         qcountry = q["country"][qi]
-        for (src, j, bn_, ba_, is_s2) in per_q[i]:
+        for (src, j, bn_, ba_, is_s2, dc, dr, ind) in per_q[i]:
             d = pools.src[src]
             rows.append((qcore, qaddr, qlegal, qstate, qcountry,
                          d["core"][j], d["addr"][j], int(d["legal"][j]), d["state"][j],
                          bn_, ba_, is_s2,
                          float(q_rar[i]), float(d["name_rarity"][j]),
-                         float(q_sat[i]), float(d["addr_sat"][j])))
+                         float(q_sat[i]), float(d["addr_sat"][j]),
+                         dc, dr, ind))
             ids.append(d["ids"][j])
             pos += 1
         ends.append(pos)

@@ -30,6 +30,9 @@ def main():
     ap.add_argument("--chunk", type=int, default=2000)
     ap.add_argument("--procs", type=int, default=7)
     ap.add_argument("--no-calib", action="store_true")
+    ap.add_argument("--dense", default=None,
+                    help="dense candidate file from embed_retrieve.py (unioned in)")
+    ap.add_argument("--dense-k", type=int, default=25)
     args = ap.parse_args()
 
     booster = iso = None
@@ -56,7 +59,7 @@ def main():
                          count=n_q)
     print("entities: %d   true pairs: %d" % (n_q, int(n_true.sum())), flush=True)
 
-    pools = Pools(args.split)
+    pools = Pools(args.split, dense=args.dense, dense_k=args.dense_k)
     G, S, Y = [], [], []
     t0 = time.time()
     with Pool(args.procs) as pool:

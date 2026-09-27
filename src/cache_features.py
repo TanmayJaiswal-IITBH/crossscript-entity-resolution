@@ -29,6 +29,9 @@ def main():
     ap.add_argument("--ba", type=int, default=8000)
     ap.add_argument("--chunk", type=int, default=1500)
     ap.add_argument("--procs", type=int, default=7)
+    ap.add_argument("--dense", default=None,
+                    help="dense candidate file from embed_retrieve.py (unioned in)")
+    ap.add_argument("--dense-k", type=int, default=25)
     args = ap.parse_args()
 
     t = read_tsv(args.truth)
@@ -42,7 +45,7 @@ def main():
     print("entities %d   true pairs %d   features %d"
           % (n_q, int(n_true.sum()), N_FEATURES), flush=True)
 
-    pools = Pools(args.split)
+    pools = Pools(args.split, dense=args.dense, dense_k=args.dense_k)
     Xs, G, Y, ids_all = [], [], [], []
     t0 = time.time()
     with Pool(args.procs) as pool:

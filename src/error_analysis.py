@@ -79,6 +79,9 @@ def main():
     ap.add_argument("--procs", type=int, default=7)
     ap.add_argument("--max-entities", type=int, default=20000)
     ap.add_argument("--examples", type=int, default=4)
+    ap.add_argument("--dense", default=None,
+                    help="dense candidate file from embed_retrieve.py (unioned in)")
+    ap.add_argument("--dense-k", type=int, default=25)
     args = ap.parse_args()
 
     tau, delta, tau2, tsing, kmax = np.load(args.rule)
@@ -105,7 +108,7 @@ def main():
     print("building name-token df table ...", flush=True)
     df = token_df(os.path.join(WORK, "%s_s1_norm.parquet" % args.split))
 
-    pools = Pools(args.split)
+    pools = Pools(args.split, dense=args.dense, dense_k=args.dense_k)
     pat = collections.Counter()
     examples = collections.defaultdict(list)
     n_fp = n_tp = n_fn = 0

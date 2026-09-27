@@ -29,12 +29,15 @@ ABS_FEATURES = [
     # corpus statistics -- added Day 3 from the false-merge analysis
     "q_name_rarity", "p_name_rarity", "q_addr_sat", "p_addr_sat",
     "streetnum_conflict", "dig_conflict", "generic_and_addr_only",
+    # dense bi-encoder (multilingual-e5-small over "name, address") -- see pairs.py
+    "dense_cos", "dense_rank", "in_dense",
 ]
 REL_FEATURES = [
     "n_cands", "n_near_best",
     "s0", "s0_rank", "s0_d_best", "s0_r_best", "s0_d_second",
     "nt_rank", "nt_d_best", "at_rank", "at_d_best",
     "s0_rank_src", "s0_is_best", "s0_z",
+    "dcos_d_best", "dcos_rank",
 ]
 FEATURE_NAMES = ABS_FEATURES + REL_FEATURES
 N_ABS = len(ABS_FEATURES)
@@ -129,7 +132,8 @@ def _abbrev(qt, pt):
 
 def abs_features(qcore, qaddr, qlegal, qstate, qcountry,
                  pcore, paddr, plegal, pstate, blk_n, blk_a, src_s2,
-                 q_rarity=0.0, p_rarity=0.0, q_sat=0.0, p_sat=0.0):
+                 q_rarity=0.0, p_rarity=0.0, q_sat=0.0, p_sat=0.0,
+                 dense_cos=0.0, dense_rank=99.0, in_dense=0.0):
     qt_l = qcore.split()
     pt_l = pcore.split()
     qt, pt = set(qt_l), set(pt_l)
@@ -196,7 +200,8 @@ def abs_features(qcore, qaddr, qlegal, qstate, qcountry,
             1.0 if len(paddr) < 12 else 0.0, a_landmark,
             blk_n, blk_a, src_s2, float(COUNTRY_ID.get(qcountry, 3)),
             q_rarity, p_rarity, q_sat, p_sat,
-            streetnum_conflict, dig_conflict, generic_and_addr_only]
+            streetnum_conflict, dig_conflict, generic_and_addr_only,
+            dense_cos, dense_rank, in_dense]
 
 
 def abs_block(rows):
@@ -279,9 +284,14 @@ def add_relative(A, group_starts, group_ends, src_s2):
             o = sel[np.argsort(-v[sel], kind="stable")]
             rank_src[a + o] = np.arange(len(o), dtype=np.float32)
 
+    # dense similarity relative to the entity's best dense match: the bi-encoder's
+    # own answer to "is this the best explanation for this entity"
+    dc_rank, dc_d_best, _, _ = _grouped_rel(
+        np.ascontiguousarray(A[:, ix["dense_cos"]]), group_starts, group_ends)
     cols = [sizes, near, s0, rank, d_best, r_best, d_second,
             nt_rank, nt_d_best, at_rank, at_d_best,
-            rank_src, (rank == 0).astype(np.float32), z]
+            rank_src, (rank == 0).astype(np.float32), z,
+            dc_d_best, dc_rank]
     for j, c in enumerate(cols):
         R[:, j] = c
     return np.hstack([A, R])
