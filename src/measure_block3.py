@@ -9,7 +9,19 @@ import pyarrow.parquet as pq
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import WORK, read_tsv
 from block3 import FieldIndex, retrieve_union
-from measure_block2 import load_val_queries
+
+
+def load_val_queries(split="train", truth_file="val_truth.tsv"):
+    t = read_tsv(os.path.join(WORK, truth_file))
+    vids = t["source1_entity_id"].to_pylist()
+    cells = t["matched_entity_ids"].fill_null("").to_pylist()
+    truth = {i: set(c.split(",")) if c else set() for i, c in zip(vids, cells)}
+    vset = set(vids)
+    tb = pq.read_table(os.path.join(WORK, "%s_s1_norm.parquet" % split))
+    ids = tb["entity_id"].to_pylist()
+    tb = tb.take([i for i, e in enumerate(ids) if e in vset])
+    q = {c: tb[c].to_pylist() for c in tb.column_names}
+    return q, truth
 
 
 def main():
