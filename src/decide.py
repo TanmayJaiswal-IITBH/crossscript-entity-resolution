@@ -75,6 +75,9 @@ def main():
     ap.add_argument("--scored", default=os.path.join(WORK, "val_scored.npz"))
     ap.add_argument("--coarse", action="store_true")
     ap.add_argument("--top", type=int, default=15)
+    ap.add_argument("--write-rule", action="store_true",
+                    help="save the best rule to work/best_rule.npy (off by default so a "
+                         "diagnostic run can never overwrite the frozen rule)")
     args = ap.parse_args()
 
     gid, score, label, n_true, n_q, _ent = load(args.scored)
@@ -89,11 +92,14 @@ def main():
         singles = [0.0, 0.3, 0.5, 0.7]
         kmaxs = [12]
     else:
-        taus = np.round(np.arange(0.20, 0.86, 0.04), 3)
-        deltas = [1.0, 0.6, 0.45, 0.35, 0.25, 0.18, 0.12]
-        tau2s = [0.0, 0.35, 0.45, 0.55, 0.65, 0.75]
-        singles = [0.0, 0.35, 0.45, 0.55, 0.65]
-        kmaxs = [6, 8, 12]
+        # covers the submitted rules (0.88/0.08 TF-IDF model, 0.90/0.08 dense model).
+        # tau2 and tau_single were swept widely on Day 2 and always optimised to 0,
+        # so only a token non-zero value is kept to confirm that stays true.
+        taus = np.round(np.arange(0.50, 0.981, 0.02), 3)
+        deltas = [1.0, 0.30, 0.20, 0.12, 0.08, 0.05]
+        tau2s = [0.0, 0.94]
+        singles = [0.0, 0.94]
+        kmaxs = [8, 12]
 
     results = []
     for tau, delta, tau2, tsing, kmax in itertools.product(
@@ -114,8 +120,12 @@ def main():
     best = results[0]
     print("\nBEST F0.5 = %.5f  tau=%.2f delta=%.2f tau2=%.2f tau_single=%.2f kmax=%d"
           % (best[0], best[1], best[2], best[3], best[4], best[5]))
-    np.save(os.path.join(WORK, "best_rule.npy"),
-            np.array([best[1], best[2], best[3], best[4], best[5]], dtype=np.float64))
+    if args.write_rule:
+        np.save(os.path.join(WORK, "best_rule.npy"),
+                np.array([best[1], best[2], best[3], best[4], best[5]], dtype=np.float64))
+        print("saved work/best_rule.npy")
+    else:
+        print("(not written -- pass --write-rule to save it as work/best_rule.npy)")
 
     # what each rule component is worth, relative to a plain global threshold
     f_plain = max(macro_f05(gid, score, label, n_true, n_q, t, 1.0, 0.0, 0.0, 99)[0]

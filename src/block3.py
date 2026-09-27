@@ -124,7 +124,10 @@ def _select(idx, qh, qr, n_q, budget):
     pos, qr = pos[hit], qr[hit]
     if len(pos) == 0:
         return pos, qr, None
-    df = idx.df[pos]
+    # float64: the running sum below spans a whole chunk of queries and passes
+    # float32's exact-integer range (~1.7e7), which made the budget cutoff for a
+    # query depend on which other queries shared its chunk.
+    df = idx.df[pos].astype(np.float64)
     ok = df <= QDF_CAP
     pos, qr, df = pos[ok], qr[ok], df[ok]
     if len(pos) == 0:
