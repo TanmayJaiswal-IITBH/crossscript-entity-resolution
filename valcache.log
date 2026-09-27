@@ -1,8 +1,0 @@
-entities 39999   true pairs 138584   features 60
-  1500/39999  35s (eta 897s)
-  9000/39999  157s (eta 542s)
-  16500/39999  370s (eta 526s)
-  24000/39999  582s (eta 388s)
-  31500/39999  792s (eta 214s)
-  39000/39999  1153s (eta 30s)
-saved work/valcache_X.npy (9433037 x 60, 2.3 GB) and work/valcache_meta.npz in 1274s

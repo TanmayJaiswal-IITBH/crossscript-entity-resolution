@@ -1,49 +1,35 @@
 # ============================================================================
-# Excluded: challenge data and bulk generated artefacts.
-# 18 of these exceed GitHub's 100 MB hard per-file limit; all are either
-# organiser-supplied or regenerable from src/ with PYTHONHASHSEED=0 and the
-# frozen SEED=20260925.
+# Challenge data -- organiser-supplied, up to 509 MB per file
 # ============================================================================
-
-# challenge data (organiser-supplied, up to 509 MB per file)
 dataset/
 
-# bulk generated artefacts: postings indexes, normalised parquet caches,
-# feature matrices, per-shard candidate streams
-work/*.parquet
-work/*.npz
-work/*.npy
-work/cand_*.tsv
-work/out_*.tsv
-work/_package/
-
-# derived ground-truth splits: regenerate with `python src/split.py`
-work/val_truth.tsv
-work/val_meta.tsv
-work/fit_truth.tsv
-work/fit_meta.tsv
-work/smoke_truth.tsv
-
-# candidate_pairs.tsv is ~3.5 GB at the final blocking settings
-output/candidate_pairs.tsv
-
-# submission archive
-*_submission.zip
-
 # ============================================================================
-# Kept: trained model, calibration, frozen decision rule, run logs,
-# orchestration scripts, and the final submission file.
-# Negations below re-include specific artefacts excluded by the rules above.
+# work/ and output/ are ALLOWLISTS: everything generated is ignored except the
+# final model artefacts and the final submission. Regenerate the rest with the
+# commands in PIPELINE_README.md (PYTHONHASHSEED=0, frozen SEED=20260925).
+# Bulk artefacts here reach 7+ GB each (embeddings, feature caches, candidates).
 # ============================================================================
+work/*
+!work/matcher_lgb.txt
 !work/matcher_calib.pkl
 !work/best_rule.npy
+
+output/*
+!output/matching_results.tsv
+
+# ============================================================================
+# Local-only
+# ============================================================================
+logs/
+*.log
+catboost_info/
+*_submission.zip
+venv*/
 
 # python
 __pycache__/
 *.py[cod]
 *.egg-info/
-.venv/
-venv/
 .ipynb_checkpoints/
 
 # os / editor
