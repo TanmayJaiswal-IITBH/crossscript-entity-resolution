@@ -9,169 +9,168 @@ as each S1 entity. An entity may have zero, one, or many matches.
 
 | | |
 |---|---|
-| **Validation macro F₀.₅** | **0.94286** |
-| Blocking recall | 0.9448 |
-| Reduction ratio | 0.99997715 |
-| Micro precision / recall | 0.9855 / 0.8889 |
+| **Validation macro F₀.₅** | **0.9609** (+ conflict resolution) |
+| Public leaderboard (previous TF-IDF version) | 0.925 |
+| Blocking recall | **0.9855** |
+| Micro precision / recall | 0.9843 / 0.9277 |
 | Scale | 2.2M queries × 10.3M candidates (train) · 1.7M × 10.0M (test) |
 
-Measured on a frozen, stratified held-out split of 39,999 Source-1 entities, searched
-against the **full** candidate pools — not a subsample.
+Validation is a frozen, stratified held-out split of 39,999 Source-1 entities searched
+against the **full** candidate pools. It tracks the leaderboard: the country mix of the
+test set predicted 0.9253 for the TF-IDF version, and the portal returned 0.925.
 
 ---
 
 ## The interesting part of this problem
 
 **Names are transliterated into entirely different scripts.** The same business appears
-as `Shyam Consulting Pvt Ltd`, `श्याम कंसल्टिंग प्रा. लि.`, and `Shyam Pvt Ltd Center`.
-Raw string similarity scores these at ~0 across scripts. The data contains Devanagari,
-Tamil, Telugu, Kannada, Gujarati and Bengali.
+as `Tech Food Private Limited` and `टेक फूड प्राइवेट लिमिटेड`. Raw string similarity
+scores these at ~0. The data contains Devanagari, Tamil, Telugu, Kannada, Gujarati and
+Bengali.
 
-The fix is cheap and does most of the work: `unidecode`, then **collapse runs of
-repeated characters**. Indic transliteration systematically doubles consonants and
-lengthens vowels, so `limittedd → limited` and `praaivett → praivet`. This lifts typical
-cross-script pair similarity from ~0 to 70–95.
+**Addresses saturate.** In dense commercial buildings many distinct businesses normalise
+to an identical address string — this was the root cause of over half of all false
+merges.
 
-**Addresses saturate.** In dense commercial buildings dozens of distinct businesses
-normalise to an identical address string, so address agreement there is nearly
-worthless evidence — this turned out to cause 52% of all false merges. About 3% of
-records have no address at all.
-
-**France appears only at test time**, with no training representation, so nothing in
-the pipeline may be country-coupled.
+**France appears only at test time** (15% of test entities), with no training data at all.
 
 ---
 
 ## Approach
 
-**1 · Normalise** — `unidecode` → lowercase → strip punctuation → collapse repeated
-characters. Legal forms (`Pvt`/`Private`/`प्रा.`, `L.L.C.`/`LLC`) and honorifics are
-folded to canonical tokens and separated from the core name.
+**1 · Normalise** — `unidecode` → lowercase → strip punctuation → **collapse repeated
+characters** (`limittedd → limited`). Legal forms and honorifics are folded out of the
+core name.
 
-**2 · Block** — every record becomes a bag of country-prefixed tokens: core name
-tokens, name char-4-grams, address tokens, address digit runs. Retrieval is binary-tf
-cosine (Σ idf² ÷ field norm), walked rarest-first under a posting budget.
+**2 · Block — two retrievers, unioned**
 
-The key design choice: **name and address are retrieved separately and unioned.** A
-true pair often agrees on exactly one field — the address is empty so only the name can
-match, or the name is in another script so only the address can. Summing both into one
-score buries those pairs.
+* **Sparse:** country-prefixed tokens (name tokens, name char-4-grams, address tokens,
+  digit runs), binary-tf cosine, name and address retrieved *separately*, top-60 each.
+* **Dense:** a multilingual bi-encoder (`intfloat/multilingual-e5-small`, MIT, 118M
+  parameters) embeds **name + address together**; exact GPU cosine search returns the
+  top-25 per source within the same country.
 
-| blocking iteration | recall |
+| blocking | recall |
 |---|---|
 | composite keys | 0.829 |
-| IDF-weighted tokens, one combined field | 0.848 |
-| per-field cosine, unioned | 0.894 |
-| widened (K=60, budget 8000) | **0.945** |
+| sparse, one combined field | 0.848 |
+| sparse, per-field, unioned | 0.945 |
+| **sparse ∪ dense** | **0.986** |
 
-**3 · Match** — LightGBM over **60 pair features**, cross-validated with folds grouped
-by S1 entity, then isotonically calibrated.
+The two are complementary: dense alone reaches 0.962, sparse alone 0.945. Embedding the
+name *with* its address is what makes the dense side work — name-only embeddings recover
+0.5% of the cross-script pairs sparse misses; name + address recovers 68%.
 
-The strongest features are **relative, not absolute**: a candidate's rank within its
-entity's candidate set, its ratio to the best score, its gap to the runner-up. Five of
-the top six features by gain are relative. The question that matters is not "is this
-pair similar" but "is this the best explanation for this entity" — which is worth ~0.2
-F₀.₅ on its own.
+**3 · Match** — LightGBM over **65 pair features**, cross-validated with folds grouped by
+S1 entity and isotonically calibrated. The strongest features are **relative**: a
+candidate's dense-similarity rank within its entity, its gap to the best candidate, its
+rank by a similarity blend. The question that matters is not "is this pair similar" but
+"is this the best explanation for this entity".
 
-**4 · Decide** — accept when `score ≥ 0.88` **and** `score ≥ best − 0.08`, at most 12
-per entity. F₀.₅ weights precision twice recall and is macro-averaged per entity, so a
-false merge on a singleton costs a full 1.0.
+**4 · Decide** — accept when `score ≥ 0.90` and `score ≥ best − 0.08`, at most 12 per
+entity.
+
+**5 · Resolve conflicts** — Source 1 is deduplicated, so each S2/S3 record belongs to
+**exactly one** S1 entity (verified: 0 of 7,638,365 ground-truth records are claimed
+twice). A record accepted by several entities is awarded to its highest-scoring claimant.
 
 ---
 
 ## Results
 
-| stage | blocking recall | macro F₀.₅ |
-|---|---|---|
-| hand-weighted similarity blend | 0.8944 | 0.706 |
-| + LightGBM matcher (52 features) | 0.8944 | 0.912 |
-| + wide blocking | 0.9448 | 0.930 |
-| + retrained on wide candidate distribution | 0.9448 | 0.936 |
-| + corpus-statistic & conflict features (60) | 0.9448 | **0.943** |
+| stage | blocking recall | validation F₀.₅ | leaderboard |
+|---|---|---|---|
+| hand-weighted similarity blend | 0.894 | 0.706 | 0.694 |
+| + LightGBM matcher | 0.894 | 0.912 | |
+| + wide sparse blocking | 0.945 | 0.930 | |
+| + corpus-statistic & conflict features | 0.945 | 0.943 | **0.925** |
+| **+ dense bi-encoder** | **0.986** | **0.961** | *pending* |
 
-A perfect matcher over the current candidate set would score **0.976**, so the matcher
-realises 96.6% of what blocking makes available.
+**Choosing the model — 5-fold cross-validation** on 133,780 train entities (every entity
+in 8 whole states, so both sides of each conflict are scored), thresholds tuned nested:
+
+| model + conflict handling | macro F₀.₅ | vs plain LightGBM | folds won |
+|---|---|---|---|
+| **LightGBM + keep-best** | **0.94841** | **+0.00219 ± 0.00028** | **5/5** |
+| LightGBM+XGBoost blend + keep-best | 0.94841 | +0.00218 | 5/5 |
+| LightGBM + drop-all | 0.94765 | +0.00142 | 5/5 |
+| LightGBM (plain) | 0.94623 | — | — |
+| XGBoost (plain) | 0.94547 | −0.00076 | 0/5 |
+| CatBoost (plain) | 0.94318 | −0.00305 | 0/5 |
 
 ### What didn't work, and is worth knowing
 
-* **An elaborate per-entity decision rule was worth +0.0004.** A full sweep over global
-  threshold × relative margin × a higher bar for 2nd+ matches × an explicit singleton
-  gate × cap barely beat a plain global threshold. Both the second-match threshold and
-  the singleton gate optimised to *zero*. With a sufficiently separable score
-  distribution, the shape of the decision stops carrying information.
-* **Singletons are a small lever.** They are 5.59% of entities and 90.2% are already
-  correct; perfect singleton handling would add +0.0055.
-* **Chains, franchises and holding-company overlap barely appear** among false merges,
-  despite being the textbook failure modes. The real cause is address saturation.
+* **An elaborate per-entity decision rule was worth +0.0004.** Separate thresholds for
+  2nd+ matches and an explicit singleton gate both optimised to zero.
+* **Model class barely matters.** Three gradient-boosting libraries land within 0.003;
+  blending adds nothing.
+* **Chains, franchises and holding-company overlap barely appear** among false merges.
+  The real causes were address saturation and near-duplicate siblings.
 
-### Top false-merge patterns
+### Known weakness: France
 
-| # | pattern | share |
-|---|---|---|
-| 1 | sibling of a true match (same name, same street, different number) | 44.7% |
-| 2 | generic name — address carries it, names diverge entirely | 24.8% |
-| 3 | empty address, name-only evidence | 14.9% |
-| 4 | same address, genuinely different business | 6.9% |
-
-Patterns 1 and 4 are the same underlying problem. Reading these directly produced the
-address-saturation, name-rarity and street-number-conflict features, which moved
-F₀.₅ from 0.936 to 0.943.
+France is 15% of the test set and absent from training. It produces **52% of all
+contested records** — ten times the US conflict rate — so the matcher over-matches French
+records. Working back from the leaderboard score puts France near 0.85, against 0.96 for
+US. Conflict resolution removes every collision; non-colliding false matches remain.
 
 ---
 
 ## Quickstart
 
+Two environments: the base one for everything except embeddings, and a GPU one for the
+bi-encoder. Full commands, in order, are in [PIPELINE_README.md](PIPELINE_README.md).
+
 ```bash
-pip install -r requirements.txt
-export PYTHONHASHSEED=0          # blocking tokens are hashed with hash(); the
-export ER_ROOT=/path/to/root     # index and queries must agree on the seed
+pip install -r requirements.txt                 # base environment
+export PYTHONHASHSEED=0                         # blocking tokens are hashed with hash()
+export ER_ROOT=/path/to/root                    # directory containing dataset/
 
-python src/normalize.py train test     # normalise all 7 source files  (~4 min)
-python src/split.py                    # frozen split, SEED=20260925
+python src/normalize.py train test
+python src/split.py
 python src/block2.py train && python src/block3.py train
-python src/build_training2.py --out work/fitw --kn 60 --ka 60 --bn 8000 --ba 8000
-python src/train_matcher.py --data work/fitw
-python src/score_split.py --truth work/val_truth.tsv --out work/val_scored.npz
-python src/decide.py --scored work/val_scored.npz
+# ... then embeddings, training, inference: see PIPELINE_README.md
 ```
-
-Full end-to-end instructions, including sharded test inference, are in
-[PIPELINE_README.md](PIPELINE_README.md).
-
-`ER_ROOT` must point at the directory containing `dataset/`. Peak RSS is ~7 GB per
-process.
 
 ## Layout
 
 | path | role |
 |---|---|
-| `src/common.py` | IO, normaliser, legal-form / address / state dictionaries |
-| `src/block2.py`, `src/block3.py` | postings index; per-field cosine retrieval |
-| `src/pairs.py`, `src/features2.py`, `src/engine.py` | candidate generation, the 60 features |
-| `src/train_matcher.py`, `src/decide.py` | grouped-CV LightGBM; decision-rule sweep |
-| `src/run_pipeline2.py` | sharded inference → submission TSVs |
-| `src/error_analysis.py` | false-merge pattern classification |
-| `src/evaluate.py` | macro F₀.₅ scorer with per-stratum breakdown |
+| `src/common.py`, `src/normalize.py` | IO, the script-folding normaliser, dictionaries |
+| `src/split.py`, `src/evaluate.py` | frozen split; macro F₀.₅ scorer |
+| `src/block2.py`, `src/block3.py` | sparse postings index; per-field cosine retrieval |
+| `src/embed_encode.py`, `src/embed_retrieve.py` | bi-encoder encoding; dense GPU retrieval |
+| `src/pairs.py`, `src/features2.py`, `src/engine.py` | candidate union, the 65 features |
+| `src/build_training2.py`, `src/train_matcher.py` | training set; grouped-CV LightGBM + calibration |
+| `src/score_split.py`, `src/decide.py` | validation scoring; decision-rule sweep |
+| `src/run_pipeline2.py`, `src/make_resolved.py` | test inference; conflict resolution |
+| `src/cv_*.py`, `src/cache_stream.py` | the 5-fold model × variant comparison |
+| `src/embed_probe.py`, `src/embed_recall.py`, `src/miss_profile.py` | bi-encoder selection and recall evidence |
+| `src/error_analysis.py`, `src/measure_block3.py`, `src/diag_*.py`, `src/recon*.py` | diagnostics behind every reported number |
+| `config/embedding_models.json` | pinned bi-encoder revisions and licences |
+| `work/matcher_lgb.txt`, `work/matcher_calib.pkl`, `work/best_rule.npy` | the submitted model |
+| `output/matching_results.tsv` | the submitted predictions |
 | [RESULTS.md](RESULTS.md) | full experiment log, including what failed |
 | [Documentation_template.md](Documentation_template.md) | methodology write-up |
 
-`src/keys.py`, `src/blocking.py`, `src/features.py`, `src/run_pipeline.py` are the
-superseded first-iteration blocking and matching code, kept because the write-up
-refers to them.
+Superseded first iterations (composite-key blocking, the hand-weighted matcher, the
+model-zoo scripts) are removed from the tree but remain in the git history.
 
-## Data and provenance
+## Data, models and provenance
 
 The `dataset/` directory is **not committed**. `utils/validate_submission.py` is
-organiser-provided and is likewise excluded; both come from the challenge's
-`student_resource` package.
+organiser-provided.
 
-**No external data of any kind is used** — no entity-resolution APIs, business
-registries, geocoding services, or internet augmentation. Every statistic the pipeline
-relies on (token document frequencies, address saturation counts, IDF weights) is
-computed from the provided TSVs alone.
+**No external data is used** — no entity-resolution APIs, business registries,
+geocoding services or lookups of any kind. Every statistic the pipeline uses is computed
+from the provided TSVs.
 
-**No pretrained model is used.** The matcher is LightGBM (MIT) trained from scratch.
-`Unidecode` is GPL-2.0-or-later and is used only for character transliteration during
-preprocessing; `anyascii` (ISC) is a drop-in permissive alternative if that matters for
-your use, though it changes transliteration output and would require rebuilding the
-indexes and retraining.
+**One pretrained model is used:** `intfloat/multilingual-e5-small` — **MIT licence,
+~118M parameters** (the rules allow MIT/Apache-2.0 models up to 8B), pinned to revision
+`614241f6` in `config/embedding_models.json`. It is used **frozen**, purely as a text
+encoder over the provided business names and addresses; it is not fine-tuned and looks
+nothing up. `paraphrase-multilingual-MiniLM-L12-v2` (Apache-2.0) was evaluated for
+comparison and not used.
+
+The matcher is LightGBM (MIT), trained from scratch. `Unidecode` is GPL-2.0-or-later and
+is used only for character transliteration during preprocessing.

@@ -301,3 +301,92 @@ any volume, which is worth noting because both were anticipated.
    provided data is the no-licence-risk option.
 3. **Name rarity as a feature.** `generic_name` is 25% of false merges and the
    df table needed to detect it already exists in the blocking index.
+
+---
+
+# Day 4 log — leaderboard calibration, model selection, bi-encoder
+
+## Leaderboard check
+
+| file | validation F0.5 | leaderboard |
+|---|---|---|
+| Day-1 hand-weighted blend | 0.706 | 0.694 |
+| Day-3 LightGBM, sparse blocking | 0.943 | **0.925** |
+
+The first 0.694 upload turned out to be the Day-1 file, not LightGBM. For the LightGBM
+file, per-country validation scores weighted by the test mix (US 38.3%, India 46.8%,
+France 15.0%) predicted **0.9253 with France at 0.85**; the portal returned 0.925.
+Validation tracks the leaderboard, and France is the weak slice.
+
+## Structure found in the data
+
+* **One-to-many is exact:** 0 of 7,638,365 ground-truth S2/S3 records belong to more than
+  one S1 entity. The LightGBM submission nonetheless had 35,809 contested records — at
+  least 44,663 provably wrong pairs.
+* **France concentrates conflicts:** 52% of contested records; 5.15% of French predicted
+  pairs in a conflict vs 0.51% (US) and 1.03% (India).
+* No leakage structure: row order, id values and within-file clustering are
+  indistinguishable from random.
+
+## Model selection by 5-fold cross-validation
+
+Evaluation set: every train entity in 8 whole states (133,780 entities, 31.6M candidate
+rows), chosen so both sides of a conflict are scored — a random sample of fraction f sees
+only ~f² of conflicts. A closure check on real test conflicts showed same-state holds for
+~65% of US/India conflicts, so conflict effects are understated. Nested threshold tuning.
+Sparse-only 60-feature model. Oracle F0.5 on this set 0.9816, blocking recall 0.9560.
+
+| model + variant | F0.5 | vs plain LightGBM | folds won |
+|---|---|---|---|
+| **LightGBM + keep-best** | **0.94841** | +0.00219 ± 0.00028 | 5/5 |
+| LightGBM+XGBoost + keep-best | 0.94841 | +0.00218 ± 0.00052 | 5/5 |
+| 3-model blend + keep-best | 0.94827 | +0.00205 | 5/5 |
+| LightGBM + margin | 0.94794 | +0.00172 | 5/5 |
+| LightGBM + drop-all | 0.94765 | +0.00142 | 5/5 |
+| LightGBM | 0.94623 | — | — |
+| XGBoost | 0.94547 | −0.00076 | 0/5 |
+| CatBoost | 0.94318 | −0.00305 | 0/5 |
+
+Every fold chose τ=0.88, δ=0.08. XGBoost/CatBoost trained on the GPU (4.5 / 8.6 min for
+5 folds vs 19.5 min for LightGBM on CPU). CatBoost hit its 1,500-iteration cap in every
+fold, so it may be slightly under-trained.
+
+## Bi-encoder
+
+What sparse blocking missed on validation (7,654 pairs, recall 0.9448): 28.9% cross-script
+names, 64.9% same-script names too common to rank, 6.1% alias names (0.34% of all pairs —
+unreachable). Probe of four configurations against 800k same-country distractors
+(recovery of the missed pairs at K=50): e5-small name-only 25.3%, **e5-small name+address
+73.6%**, MiniLM name-only 18.9%, MiniLM name+address 33.8%.
+
+Correction to an earlier claim: I projected that a bi-encoder could reach "at most 0.961"
+recall. That held for name-only embeddings (measured 0.959); name+address reached 0.986.
+
+Real recall against the full pools (sparse ∪ dense): K=10 0.9821, **K=25 0.9855 (+38
+candidates/entity)**, K=50 0.9875, K=100 0.9896. Dense alone at K=10 (0.9506) already
+beats all of sparse blocking (0.9448).
+
+| | sparse only | **sparse ∪ dense** |
+|---|---|---|
+| validation macro F0.5 | 0.94286 | **0.96090** |
+| micro precision / recall | 0.9855 / 0.8889 | 0.9843 / 0.9277 |
+| US / India | 0.9573 / 0.9212 | 0.9707 / 0.9462 |
+| oracle | 0.9761 | 0.9952 |
+
+Top features of the retrained model: `dcos_rank`, `dense_cos`, `dense_rank`. Rule:
+τ=0.90, δ=0.08. On test, the bi-encoder raised India from 3.05 to 3.25 matches/entity
+and **doubled France's contested records (18,625 -> 39,328)**; keep-best resolved all
+56,531 contested records (89,501 claims removed).
+
+## Engineering notes
+
+* Float32 running sum in the retrieval budget made a query's token cutoff depend on the
+  other queries in its chunk (1 of 55,708 entities differed on re-run). Now float64.
+  Verified: two processes computing the same 999 test entities produced identical output.
+* Selecting random rows from a memory-mapped 7.6 GB feature file pulled ~6 GB into the
+  process working set and left 0.8 GB free; replaced with sequential reads (4.4 GB).
+* The CUDA PyTorch build and Anaconda's Intel OpenMP runtime cannot share a process; the
+  embedding steps run in an isolated venv. All caches and temp files are redirected off
+  the system drive (`embed_env.sh`).
+* `decide.py` used to overwrite the frozen `best_rule.npy` on every run; it now writes
+  only with `--write-rule`.

@@ -1,103 +1,153 @@
-# Business Entity Resolution — pipeline
+# Business Entity Resolution — reproduction guide
 
-Reproduces `output/matching_results.tsv` and `output/candidate_pairs.tsv` from the
-provided TSVs. **No external data, no network access, no pretrained models.**
+Reproduces `output/matching_results.tsv` (and `output/candidate_pairs.tsv`) from the
+provided TSVs. **No external data and no lookups.** One pretrained model is used, frozen,
+as a text encoder: `intfloat/multilingual-e5-small` (MIT, ~118M parameters), pinned in
+`config/embedding_models.json`.
 
-## Environment
+## Environments
+
+Two, because the CUDA build of PyTorch conflicts with Anaconda's Intel OpenMP runtime
+when both load in one process.
+
+**Base** — everything except embeddings:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-**Paths.** The pipeline expects `dataset/` and a writable `work/` under a single
-root. In this submission package the source sits at
-`code/business_entity_resolution/src/` while the data stays at the challenge
-root, so set `ER_ROOT` to the directory that contains `dataset/`:
+**GPU embedding** — its own isolated venv (do *not* use `--system-site-packages`):
 
 ```bash
-export ER_ROOT=/path/to/student_resource
+python -m venv venv_embed
+venv_embed/Scripts/python -m pip install -r requirements-embed.txt
 ```
 
-Without it the root defaults to the parent of `src/`, which is correct only when
-the code is run in place.
+`embed_env.sh` redirects every cache and temp directory (pip, Hugging Face, CUDA kernel
+cache, temp) under one root so nothing lands in the user profile. Set `EMBED_ROOT` to
+the folder holding `venv_embed/`, then `source embed_env.sh` before any embedding step.
 
-`PYTHONHASHSEED=0` must be set for every step. Blocking tokens are hashed with
-Python's built-in `hash()`, so the index and the queries must agree on the seed.
-Peak RSS is ~7 GB per process; the full test run writes ~4 GB of intermediates.
+**Always:**
+
+```bash
+export PYTHONHASHSEED=0          # blocking tokens are hashed with hash(); index and
+                                 # queries must agree on the seed
+export ER_ROOT=/path/to/root     # the directory that contains dataset/
+```
+
+Peak RSS is ~7 GB per process. A 6 GB+ GPU is needed for the embedding steps.
 
 ## Run order
 
 ```bash
-export PYTHONHASHSEED=0
-
-# 1. normalise all 7 source files once            (~4 min)  -> work/*_norm.parquet
+# ---- 1. preprocessing                                          (~5 min)
 python src/normalize.py train test
+python src/split.py                        # frozen split, SEED=20260925
 
-# 2. frozen validation / fit split, SEED=20260925 (~1 min)  -> work/{val,fit}_*.tsv
-python src/split.py
-
-# 3. blocking index + per-field norms, per split  (~20 min)
+# ---- 2. sparse blocking index + per-field norms                (~20 min)
 python src/block2.py train && python src/block3.py train
 python src/block2.py test  && python src/block3.py test
 
-# 4. labelled pair dataset from the fit entities  (~30 min) -> work/fitw_{X,y,g}.npy
-python src/build_training2.py --out work/fitw \
-    --kn 60 --ka 60 --bn 8000 --ba 8000 --neg-rate 0.22 --max-entities 120000
+# ---- 3. dense bi-encoder: encode every record, retrieve per entity   (GPU)
+source embed_env.sh
+$VENV/Scripts/python src/embed_encode.py --split train      # 12.5M records, ~36 min
+$VENV/Scripts/python src/embed_encode.py --split test       # 11.7M records, ~35 min
+$VENV/Scripts/python src/embed_retrieve.py --split train --queries work/fit_truth.tsv --tag fit --k 25
+$VENV/Scripts/python src/embed_retrieve.py --split train --queries work/val_truth.tsv --tag val --k 100
+$VENV/Scripts/python src/embed_retrieve.py --split test  --tag test --k 25    # ~10 min
 
-# 5. train the matcher: grouped CV + isotonic     (~17 min) -> work/matcher_lgb.txt
-python src/train_matcher.py --data work/fitw --folds 4 --rounds 1400
+# ---- 4. training set: sparse + dense candidates, 65 features  (~30 min)
+python src/build_training2.py --out work/fitd --kn 60 --ka 60 --bn 8000 --ba 8000 \
+    --neg-rate 0.22 --max-entities 120000 --dense work/emb/fit_dense.npz --dense-k 25
 
-# 6. score validation and tune the decision rule  (~11 min) -> work/best_rule.npy
-python src/score_split.py --truth work/val_truth.tsv --out work/val_scored.npz \
-    --kn 60 --ka 60 --bn 8000 --ba 8000
-python src/decide.py --scored work/val_scored.npz
+# ---- 5. matcher: LightGBM, 4-fold grouped CV + isotonic       (~25 min)
+python src/train_matcher.py --data work/fitd --folds 4 --rounds 1500
 
-# 7. test inference, sharded                      (~5 h with 2 shards)
-python src/run_pipeline2.py --split test --shard 0/2 --kn 60 --ka 60 --bn 8000 --ba 8000 --tag v3 &
-python src/run_pipeline2.py --split test --shard 1/2 --kn 60 --ka 60 --bn 8000 --ba 8000 --tag v3 &
-wait
-python src/run_pipeline2.py --split test --shard 0/2 --merge --tag v3 --out-dir output
+# ---- 6. validate and choose the decision rule                 (~15 min)
+python src/score_split.py --truth work/val_truth.tsv --out work/val_scored_dense.npz \
+    --kn 60 --ka 60 --bn 8000 --ba 8000 --dense work/emb/val_dense.npz --dense-k 25
+python src/decide.py --scored work/val_scored_dense.npz --write-rule
+#   -> tau=0.90 delta=0.08 kmax=12, validation macro F0.5 0.96090
 
-# 8. format check
-python utils/validate_submission.py --matching output/matching_results.tsv \
-    --candidate output/candidate_pairs.tsv --test-dir dataset/test
+# ---- 7. test inference                         (~8.7 h as one process)
+python src/run_pipeline2.py --split test --kn 60 --ka 60 --bn 8000 --ba 8000 \
+    --dense work/emb/test_dense.npz --dense-k 25 --tag dense --shard 0/1
+python src/run_pipeline2.py --split test --merge --shard 0/1 --tag dense --out-dir work/dense_out
+#   To split the work across processes, add --start/--end (entity index range),
+#   concatenate the outputs in order, and merge. Output is deterministic.
+
+# ---- 8. conflict resolution -> the submission                 (~2 min)
+python src/make_resolved.py --matching work/dense_out/matching_results.tsv \
+    --scored work/dense_out/accepted_scores.tsv --out output/matching_results.tsv
+
+# ---- 9. format check
+python utils/validate_submission.py --matching output/matching_results.tsv --test-dir dataset/test
 ```
 
-Diagnostics (not required to reproduce the submission):
+`make_resolved.py` awards each record claimed by more than one entity to its
+highest-scoring claimant. `run_pipeline2.py` records the scores of accepted pairs in
+`accepted_scores.tsv`, so no re-scoring pass is needed.
+
+## Evidence behind the reported numbers (optional)
 
 ```bash
-python src/measure_block3.py --kn 60 --ka 60 --bn 8000 --ba 8000   # recall / reduction ratio
-python src/error_analysis.py --max-entities 20000                  # false-merge patterns
-python src/evaluate.py --pred <pred.tsv> --truth work/val_truth.tsv --breakdown work/val_meta.tsv
+# blocking recall / reduction ratio (sparse only)
+python src/measure_block3.py --kn 60 --ka 60 --bn 8000 --ba 8000
+
+# validation feature cache -> what blocking misses, and what dense recovers
+python src/cache_features.py --out work/valcache
+python src/miss_profile.py
+$VENV/Scripts/python src/embed_probe.py      # model x text selection
+$VENV/Scripts/python src/embed_recall.py     # real recall of sparse ∪ dense
+
+# 5-fold model x conflict-variant comparison on a competition-closed set
+python src/cv_select.py
+python src/cache_stream.py                   # 31.6M rows streamed to disk
+python src/cv_train.py --kind lgb            # CPU
+python src/cv_train.py --kind xgb            # GPU
+python src/cv_train.py --kind cat            # GPU
+python src/cv_variants.py
+
+# false-merge patterns
+python src/error_analysis.py --max-entities 20000 --dense work/emb/val_dense.npz
 ```
+
+The reported k-fold results were produced with the sparse-only 60-feature model, before
+the bi-encoder was added; pass `--dense` to `cache_stream.py` to repeat them on the
+current feature set.
 
 ## Modules
 
 | file | role |
 |---|---|
-| `src/common.py` | TSV IO; the normaliser (unidecode → lowercase → strip punctuation → collapse repeated characters); legal-form, address-abbreviation and state dictionaries |
-| `src/normalize.py` | applies the normaliser to all 24M records in parallel, caches parquet |
-| `src/split.py` | S1-level split stratified by country × match-cardinality bucket |
-| `src/block2.py` | token extraction (name tokens, name char-4-grams, address tokens, address digit runs; all country-prefixed) and the postings index |
-| `src/block3.py` | per-field cosine retrieval — name and address scored and truncated separately, then unioned — and the per-record field norms |
-| `src/pairs.py` | both-pool candidate generation; per-record corpus statistics (name rarity, address saturation) |
-| `src/features2.py` | the 60 pair features: absolute similarity plus per-entity relative features |
-| `src/engine.py` | chunk pipeline: candidates → absolute features → relative features |
-| `src/build_training2.py` | labelled pair dataset; negatives come from blocking, matching the inference distribution |
-| `src/train_matcher.py` | LightGBM with CV grouped by S1 entity, plus isotonic calibration |
-| `src/decide.py` | decision-rule sweep, exact closed-form F_0.5 vectorised over the split |
-| `src/run_pipeline2.py` | sharded test inference and the merge into both output TSVs |
-| `src/evaluate.py` | macro F_0.5 scorer, per-stratum breakdown |
-| `src/error_analysis.py` | false-merge pattern classification with worked examples |
-| `src/measure_block3.py` | blocking recall and reduction ratio on the frozen split |
+| `src/common.py` | TSV IO; the normaliser; legal-form, address and state dictionaries |
+| `src/normalize.py` | normalises all 24M records in parallel, caches parquet |
+| `src/split.py` | S1-level split stratified by country x match cardinality |
+| `src/evaluate.py` | macro F0.5 exactly as specified |
+| `src/recon.py`, `src/recon_gt.py` | data profiling and ground-truth statistics |
+| `src/block2.py` | sparse tokens and the postings index |
+| `src/block3.py` | per-field cosine retrieval and per-record field norms |
+| `src/embed_encode.py` | bi-encoder encoding of "name, address", float16, streamed to disk |
+| `src/embed_retrieve.py` | exact GPU top-K per source within the same country |
+| `src/pairs.py` | sparse ∪ dense candidates; corpus statistics |
+| `src/features2.py` | the 65 pair features, absolute and per-entity relative |
+| `src/engine.py` | chunk pipeline: candidates -> absolute -> relative features |
+| `src/build_training2.py` | labelled pairs; negatives drawn from blocking |
+| `src/train_matcher.py` | LightGBM, CV grouped by S1 entity, isotonic calibration |
+| `src/score_split.py`, `src/decide.py` | scored validation cache; decision-rule sweep |
+| `src/run_pipeline2.py` | test inference, sharding / explicit ranges, merge |
+| `src/make_resolved.py` | one-to-many conflict resolution by score |
+| `src/cv_select.py`, `src/cache_stream.py`, `src/cv_train.py`, `src/cv_variants.py` | the k-fold comparison |
+| `src/cache_features.py`, `src/miss_profile.py`, `src/embed_probe.py`, `src/embed_recall.py` | bi-encoder evidence |
+| `src/error_analysis.py`, `src/measure_block3.py`, `src/diag_tokens.py`, `src/diag_rank.py` | diagnostics |
+| `src/make_package.py` | assembles the submission zip |
 
 ## Key results
 
 | | |
 |---|---|
-| blocking recall | 0.9448 |
-| candidates / entity | 235.8 |
-| reduction ratio | 0.99997715 |
-| validation macro F_0.5 | **0.94286** |
-| micro precision / recall | 0.9855 / 0.8889 |
-| decision rule | `score ≥ 0.88` and `score ≥ best − 0.08`, at most 12 per entity |
+| blocking recall (sparse ∪ dense) | 0.9855 |
+| candidates / entity | 274.6 |
+| validation macro F0.5 | **0.96090** |
+| micro precision / recall | 0.9843 / 0.9277 |
+| decision rule | `score ≥ 0.90`, `score ≥ best − 0.08`, at most 12 per entity |
